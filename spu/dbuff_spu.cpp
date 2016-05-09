@@ -7,11 +7,15 @@
 #define NUM_ELEMS     (TRANSFER_SIZE / sizeof(float))  // numarul de elemente procesate de un SPU la o iteratie
 
 typedef struct {
-	float* A;	// pointer to section in first input array
-	float* B;	// pointer to section in second input array
-	float* C;	// pointer to section of output array
-	int num_elems;	// numarul total de elemente procesate de 1 SPU
+        unsigned int* IN;       // pointer to section in first input array^M
+        unsigned int* KEY;      // pointer to section in second input array^M
+        unsigned int* OUT;      // pointer to section of output array^M
+        unsigned int size;
+        unsigned int double_bufferring;
+        unsigned int vector;
+        int num_elems;  // numarul de elemente procesate de 1 SPU^M
 } pointers_t;
+
 
 void print_vector(vector float *v, int length);
 
@@ -22,8 +26,8 @@ void add_float_arrays(float* a, float* b, float*c, int num_elems) {
 
 int main(unsigned long long speid, unsigned long long argp, unsigned long long envp)
 {
-	unsigned int i;			               // numarul iteratiei
-	int buf, nxt_buf;                              // indexul bufferului, 0 sau 1
+	//unsigned int i;			               // numarul iteratiei
+	//int buf, nxt_buf;                              // indexul bufferului, 0 sau 1
 	pointers_t p __attribute__ ((aligned(16)));    // structura cu adrese si numarul total de elemente procesate de un SPU
 	uint32_t tag_id[2];	                       // de data asta avem nevoie de doua tag_id
 
@@ -41,8 +45,9 @@ int main(unsigned long long speid, unsigned long long argp, unsigned long long e
 	mfc_get((void*)&p, argp, (int) envp, tag_id[0], 0, 0);
 	waitag(tag_id[0]);
 
-	/* array-uri pentru a stoca datele - 2 seturi - intr-un set vom tranfera date in timp ce
-	 * vom procesa datele din celalalt set */
+	printf("Starting SPE %lld reading %d\n", speid, p.num_elems);
+
+	/*
 	float A[2][NUM_ELEMS];
 	float B[2][NUM_ELEMS];
 	float C[2][NUM_ELEMS];
@@ -88,6 +93,7 @@ int main(unsigned long long speid, unsigned long long argp, unsigned long long e
 	// Trimit ultimul buffer la PPU
 	mfc_put((void*)C[buf], (uint32_t)(p.C)+(i-1)*TRANSFER_SIZE, TRANSFER_SIZE, tag_id[buf], 0, 0);
 	waitag(tag_id[buf]);	 
+	*/
 
 	// eliberez tag-uri
 	mfc_tag_release(tag_id[0]);

@@ -7,7 +7,7 @@ DIRS := ../spu
 ################
 # Target
 ################
-PROGRAM_ppu := dbuff_ppu
+PROGRAM_ppu := tema3
 
 ################
 # Local Defines
@@ -29,3 +29,6 @@ ifdef CELL_TOP
 else
     include ../../../../buildutils/make.footer
 endif
+
+run:
+	./tema3 2 0 0 e ../../serial/in1 ../../serial/key1 out1.txt

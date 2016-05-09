@@ -31,12 +31,19 @@ extern spe_program_handle_t dbuff_spu;
 #define LINE_SIZE 128
 #define PATH_SIZE 40
 
+int num_spe;
+int mod_vector;
+int mod_dma;
 
 typedef struct {
 	unsigned int* IN;	// pointer to section in first input array
 	unsigned int* KEY;	// pointer to section in second input array
 	unsigned int* OUT;	// pointer to section of output array
+	unsigned int size;
+	unsigned int double_bufferring;
+	unsigned int vector;
 	int num_elems;	// numarul de elemente procesate de 1 SPU
+	char padding[16 - 3 * sizeof(unsigned int*) + 4 * sizeof(unsigned int)];
 } pointers_t;
 
 void *ppu_pthread_function(void *thread_arg) {
@@ -58,7 +65,7 @@ void *ppu_pthread_function(void *thread_arg) {
 
 	/* Run SPE context */
 	unsigned int entry = SPE_DEFAULT_ENTRY;
-	if (spe_context_run(ctx, &entry, 0, arg, (void*)sizeof(pointers_t), NULL) < 0) {  
+	if (spe_context_run(ctx, &entry, 0, arg, (void*)sizeof(pointers_t), NULL) < 0) {
 		perror ("Failed running context");
 		exit (1);
 	}
@@ -203,6 +210,9 @@ void process_single (char op, char* in, char* key, char* out) {
 	double total_time = 0, cpu_time = 0;
 	int in_size, key_size, num_ints;
 
+	int chunk_size;
+	int i = 0;
+
 	unsigned int *IN __attribute__ ((aligned(16)));
 	unsigned int *KEY __attribute__ ((aligned(16)));
 	unsigned int *OUT __attribute__ ((aligned(16)));
@@ -212,6 +222,43 @@ void process_single (char op, char* in, char* key, char* out) {
 	KEY = (unsigned int*) _read_file(key, &key_size);
 	OUT = (unsigned int *) malloc (in_size * sizeof(unsigned int)); 
 	printf("In size = %d, key_size = %d\n", in_size,  key_size);
+
+	chunk_size = in_size/num_spe;
+	/*
+	 * Send the data to spe's process it and then return the
+	 * processed value
+	 */
+
+	pthread_t threads[num_spe];
+	pointers_t thread_arg[num_spe] __attribute__ ((aligned(16)));
+	/* 
+	 * Create several SPE-threads to execute 'ex1_spu'.
+	 */
+
+	for(i = 0; i < num_spe; i++) {
+
+		int num_elems = chunk_size;
+		thread_arg[i].IN = IN + i*num_elems;
+		thread_arg[i].KEY = KEY + i*num_elems;
+		thread_arg[i].OUT = OUT + i*num_elems;
+		thread_arg[i].num_elems = num_elems;
+		thread_arg[i].double_bufferring = 0;
+		thread_arg[i].vector = 0;
+
+		/* Create thread for each SPE context */
+		if (pthread_create (&threads[i], NULL, &ppu_pthread_function, &thread_arg[i]))  {
+			perror ("Failed creating thread");
+			exit (1);
+		}
+	}
+
+	/* Wait for SPU-thread to complete execution.  */
+	for (i = 0; i < num_spe; i++) {
+		if (pthread_join (threads[i], NULL)) {
+			perror("Failed pthread_join");
+			exit (1);
+		}
+	}
 
 	if (key_size != 4 * sizeof(int)) {
 		printf("Invalid key file %s\n", key);
@@ -255,43 +302,6 @@ void process_single (char op, char* in, char* key, char* out) {
 		printf("Decrypted [%s,%d] in [CPU=%lf, Total=%lf]\n", in, 
 				in_size, cpu_time, total_time);
 
-	int i, spu_threads;
-	pthread_t threads[MAX_SPU_THREADS];
-	pointers_t thread_arg[MAX_SPU_THREADS] __attribute__ ((aligned(16)));
-
-	/* 
-	 * Determine the number of SPE threads to create.
-	 */
-
-	spu_threads = spe_cpu_info_get(SPE_COUNT_USABLE_SPES, -1);
-	if (spu_threads > MAX_SPU_THREADS) spu_threads = MAX_SPU_THREADS;
-
-	/* 
-	 * Create several SPE-threads to execute 'ex1_spu'.
-	 */
-
-	for(i = 0; i < spu_threads; i++) {
-
-		int num_elems = ARR_SIZE / spu_threads;
-		thread_arg[i].IN = IN + i*num_elems;
-		thread_arg[i].KEY = KEY + i*num_elems;
-		thread_arg[i].OUT = OUT + i*num_elems;
-		thread_arg[i].num_elems = num_elems;
-
-		/* Create thread for each SPE context */
-		if (pthread_create (&threads[i], NULL, &ppu_pthread_function, &thread_arg[i]))  {
-			perror ("Failed creating thread");
-			exit (1);
-		}
-	}
-
-	/* Wait for SPU-thread to complete execution.  */
-	for (i = 0; i < spu_threads; i++) {
-		if (pthread_join (threads[i], NULL)) {
-			perror("Failed pthread_join");
-			exit (1);
-		}
-	}
 }
 
 int main(int argc, char **argv)
@@ -300,8 +310,11 @@ int main(int argc, char **argv)
 	/*
 	 * Check if arguments match
 	 */
-	if (argc == 5) {
-		process_single(argv[1][0], argv[2], argv[3], argv[4]);
+	if (argc == 8) {
+		num_spe = atoi(argv[1]);
+		mod_vector = atoi(argv[2]);
+		mod_dma = atoi(argv[3]);
+		process_single(argv[4][0], argv[5], argv[6], argv[7]);
 		return 0;
 	} else if (argc == 2) {
 		//process_multi(argv[1]);
