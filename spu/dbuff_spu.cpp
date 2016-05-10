@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <spu_intrinsics.h>
 #include <spu_mfcio.h>
+#include <stdlib.h>
 
 #define waitag(t) mfc_write_tag_mask(1<<t); mfc_read_tag_status_all();
 #define TRANSFER_SIZE (10000)                          // dimensiunea unui transfer DMA in octeti
@@ -13,7 +14,9 @@ typedef struct {
         unsigned int size;
         unsigned int double_bufferring;
         unsigned int vector;
+	unsigned int offset;
         int num_elems;  // numarul de elemente procesate de 1 SPU^M
+	char padding[16];
 } pointers_t;
 
 
@@ -29,6 +32,8 @@ int main(unsigned long long speid, unsigned long long argp, unsigned long long e
 	//unsigned int i;			               // numarul iteratiei
 	//int buf, nxt_buf;                              // indexul bufferului, 0 sau 1
 	pointers_t p __attribute__ ((aligned(16)));    // structura cu adrese si numarul total de elemente procesate de un SPU
+	unsigned int *IN __attribute__ ((aligned(16))); 
+	unsigned int *KEY __attribute__ ((aligned(16))); 
 	uint32_t tag_id[2];	                       // de data asta avem nevoie de doua tag_id
 
 	/* rezervare de tag ID-uri */
@@ -46,6 +51,20 @@ int main(unsigned long long speid, unsigned long long argp, unsigned long long e
 	waitag(tag_id[0]);
 
 	printf("Starting SPE %lld reading %d\n", speid, p.num_elems);
+
+	IN = (unsigned int *) malloc(p.num_elems * sizeof(unsigned int));
+	KEY = (unsigned int *) malloc (16  * sizeof(unsigned int));
+
+	/*
+	 * Check if transfer size is greater than 16kb
+	 */
+	printf("Receiving  %d\n" , p.num_elems);
+
+	
+	mfc_get((void*)IN, (uint32_t)(p.IN), p.num_elems, tag_id[0], 0, 0);
+	waitag(tag_id[0]);
+	//mfc_get((void*)KEY, (uint32_t)(p.KEY), 16, tag_id[0], 0, 0);
+	
 
 	/*
 	float A[2][NUM_ELEMS];

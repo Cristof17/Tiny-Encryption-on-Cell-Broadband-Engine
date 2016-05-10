@@ -1,5 +1,7 @@
-#include <stdlib.h>
+#define _ISOC11_SOURCE
+
 #include <stdio.h>
+#include <cstdlib>
 #include <errno.h>
 #include <libspe2.h>
 #include <pthread.h>
@@ -8,6 +10,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <string.h>
+#include <malloc.h>
 
 extern spe_program_handle_t dbuff_spu;
 
@@ -42,8 +45,9 @@ typedef struct {
 	unsigned int size;
 	unsigned int double_bufferring;
 	unsigned int vector;
+	unsigned int offset;
 	int num_elems;	// numarul de elemente procesate de 1 SPU
-	char padding[16 - 3 * sizeof(unsigned int*) + 4 * sizeof(unsigned int)];
+	char padding[16];
 } pointers_t;
 
 void *ppu_pthread_function(void *thread_arg) {
@@ -177,7 +181,7 @@ void* _read_file(char* filepath, int* size_ptr){
 				__func__, filepath);
 		exit(0);
 	}
-	buf = malloc(size);
+	buf = memalign(16, size);
 	if (!buf) {
 		fprintf(stderr, "%s: Error allocating %d bytes\n", __func__,
 				size);
@@ -220,7 +224,7 @@ void process_single (char op, char* in, char* key, char* out) {
 	gettimeofday(&t3, NULL);
 	IN = (unsigned int*) _read_file(in, &in_size);
 	KEY = (unsigned int*) _read_file(key, &key_size);
-	OUT = (unsigned int *) malloc (in_size * sizeof(unsigned int)); 
+	OUT = (unsigned int *)memalign(16, in_size * sizeof(unsigned int)); 
 	printf("In size = %d, key_size = %d\n", in_size,  key_size);
 
 	chunk_size = in_size/num_spe;
@@ -235,31 +239,68 @@ void process_single (char op, char* in, char* key, char* out) {
 	 * Create several SPE-threads to execute 'ex1_spu'.
 	 */
 
-	for(i = 0; i < num_spe; i++) {
+	printf("Size of struct in ppu = %d\n", sizeof(pointers_t));
+	if (chunk_size > (16 * 1024)) {
+		/* 
+ 		 * Send chunks of 16KB
+ 		 */
+		printf("Sending chunks of 16KB\n");
+		int size_copy = in_size;
+		int count = 0; //number of 16KB blocks sent 
+		while( size_copy > 0){
+			for(i = 0; i < num_spe; i++) {
+				printf("Start address in PPU = %p\n", IN + (count * 16 * 1024));
+				thread_arg[i].IN = IN + (count * 16 * 1024);
+				thread_arg[i].KEY = KEY + (count * 16 * 1024);
+				thread_arg[i].OUT = OUT + (count * 16 * 1024);
+				thread_arg[i].num_elems = (16 * 1024);
+				thread_arg[i].double_bufferring = 0;
+				thread_arg[i].vector = 0;
+				count++;
+				printf("Count = %d\n", count);
+				size_copy -= (16 * 1024);
 
-		int num_elems = chunk_size;
-		thread_arg[i].IN = IN + i*num_elems;
-		thread_arg[i].KEY = KEY + i*num_elems;
-		thread_arg[i].OUT = OUT + i*num_elems;
-		thread_arg[i].num_elems = num_elems;
-		thread_arg[i].double_bufferring = 0;
-		thread_arg[i].vector = 0;
+				if (pthread_create (&threads[i], NULL, &ppu_pthread_function, &thread_arg[i]))  {
+					perror ("Failed creating thread");
+					exit (1);
+				}
+			}
 
-		/* Create thread for each SPE context */
-		if (pthread_create (&threads[i], NULL, &ppu_pthread_function, &thread_arg[i]))  {
-			perror ("Failed creating thread");
-			exit (1);
+			/* Wait for SPU-thread to complete execution.  */
+			for (i = 0; i < num_spe; i++) {
+				if (pthread_join (threads[i], NULL)) {
+					perror("Failed pthread_join");
+					exit (1);
+				}
+			}
+		}
+	} 
+	else {
+		for (i = 0; i < num_spe; ++i) {
+			for(i = 0; i < num_spe; i++) {
+				thread_arg[i].IN = IN + (i * chunk_size);
+				thread_arg[i].KEY = KEY + (i * chunk_size);
+				thread_arg[i].OUT = OUT + (i * chunk_size);
+				thread_arg[i].num_elems = chunk_size;
+				thread_arg[i].double_bufferring = 0;
+				thread_arg[i].vector = 0;
+				thread_arg[i].offset = i;
+
+				if (pthread_create (&threads[i], NULL, &ppu_pthread_function, &thread_arg[i]))  {
+					perror ("Failed creating thread");
+					exit (1);
+				}
+			}
+
+			/* Wait for SPU-thread to complete execution.  */
+			for (i = 0; i < num_spe; i++) {
+				if (pthread_join (threads[i], NULL)) {
+					perror("Failed pthread_join");
+					exit (1);
+				}
+			}
 		}
 	}
-
-	/* Wait for SPU-thread to complete execution.  */
-	for (i = 0; i < num_spe; i++) {
-		if (pthread_join (threads[i], NULL)) {
-			perror("Failed pthread_join");
-			exit (1);
-		}
-	}
-
 	if (key_size != 4 * sizeof(int)) {
 		printf("Invalid key file %s\n", key);
 		return;
